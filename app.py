@@ -220,11 +220,29 @@ def photo_grid(files: list, title: str, styles: dict):
     return [paragraph(f"{title} ({len(files)}/{MAX_PHOTOS})", styles["PhotoTitle"]), table, Spacer(1, 5 * mm)]
 
 
+def fit_logo(uploaded_file, max_width: float, max_height: float):
+    """Cria a imagem da logomarca preservando a proporção."""
+    if not uploaded_file:
+        return None
+    try:
+        raw = uploaded_file.getvalue()
+        pil_image = PILImage.open(io.BytesIO(raw))
+        width, height = pil_image.size
+        if not width or not height:
+            return None
+        scale = min(max_width / width, max_height / height)
+        logo = Image(io.BytesIO(raw), width=width * scale, height=height * scale)
+        logo.hAlign = "LEFT"
+        return logo
+    except Exception:
+        return None
+
+
 # -----------------------------------------------------------------------------
 # Geração do PDF
 # -----------------------------------------------------------------------------
 
-def build_pdf(data: dict, material_groups: dict[str, list[dict[str, str]]], before: list, after: list) -> bytes:
+def build_pdf(data: dict, material_groups: dict[str, list[dict[str, str]]], before: list, after: list, logo_file=None) -> bytes:
     buffer = io.BytesIO()
     page_width, page_height = A4
 
@@ -300,7 +318,12 @@ def build_pdf(data: dict, material_groups: dict[str, list[dict[str, str]]], befo
     story = []
 
     # Cabeçalho da primeira página
-    header_left = [
+    header_left = []
+    logo = fit_logo(logo_file, 36 * mm, 18 * mm)
+    if logo:
+        header_left.append(logo)
+        header_left.append(Spacer(1, 1 * mm))
+    header_left += [
         paragraph("RELATÓRIO DE ATIVIDADE", styles["Kicker"]),
         paragraph(data["empresa"] or "Empresa não informada", styles["ReportTitle"]),
         paragraph("Registro de serviço em campo", styles["ReportSubtitle"]),
@@ -448,8 +471,13 @@ with st.form("service_form"):
         endereco = st.text_input("Endereço", placeholder="Rua, número, bairro")
         veiculo = st.text_input("Veículo / Placa", placeholder="Caminhão — ABC1D23")
     with top_right:
-        st.markdown(f'<div class="os-box">Ordem de serviço automática<br><strong>{st.session_state.ordem}</strong></div>', unsafe_allow_html=True)
-        st.write("")
+        ordem = st.text_input(
+            "Ordem de serviço",
+            value=st.session_state.ordem,
+            help="A numeração é sugerida automaticamente, mas você pode editar este campo.",
+        )
+        if ordem.strip():
+            st.session_state.ordem = ordem.strip()
         obra = st.text_input("Obra", placeholder="Nome ou referência da obra")
         equipe = st.text_input("Equipe", placeholder="Nomes ou identificação da equipe")
         inicio = st.time_input("Horário de início", value=datetime.now().replace(second=0, microsecond=0).time())
@@ -472,6 +500,19 @@ with st.form("service_form"):
     before = uploaded_photo_grid(before_files, "Fotos antes")
     after_files = st.file_uploader("Fotos depois", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True, key="after_files")
     after = uploaded_photo_grid(after_files, "Fotos depois")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("Logomarca")
+    st.caption("Opcional. A logomarca será inserida no cabeçalho do PDF.")
+    logo_file = st.file_uploader(
+        "Enviar logomarca",
+        type=["png", "jpg", "jpeg", "webp"],
+        accept_multiple_files=False,
+        key="logo_file",
+    )
+    if logo_file:
+        st.image(logo_file, caption="Prévia da logomarca", width=180)
     st.markdown('</div>', unsafe_allow_html=True)
 
     submitted = st.form_submit_button("Gerar relatório em PDF", type="primary", use_container_width=True)
@@ -499,6 +540,7 @@ if submitted:
             {"utilizado": utilizado, "removido": removido, "remanejado": remanejado},
             before,
             after,
+            logo_file,
         )
 
     file_name = f"Relatorio_{clean_filename(data_iso)}_{clean_filename(st.session_state.ordem)}.pdf"
